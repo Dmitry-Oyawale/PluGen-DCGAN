@@ -5,85 +5,96 @@ import torch.nn as nn
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# Coupling layers
-class Coupling_layer_NICE(nn.Module):        
-    def __init__(self, input_dim, n_layers, mask_type, hidden_dim=1024):
-        super(Coupling_layer_NICE, self).__init__()
-        
+class CouplingLayerNICE(nn.Module):
+    def __init__(self, input_dim, cond_dim, n_layers, mask_type, hidden_dim=512):
+        super().__init__()
+        self.input_dim = input_dim
+        self.cond_dim = cond_dim
         self.mask = self.get_mask(input_dim, mask_type)
-        
-        a = [nn.Linear(input_dim, hidden_dim), nn.LeakyReLU(0.1)]
-        for i in range(n_layers-2):
-            a.append(nn.Linear(hidden_dim, hidden_dim))
-            a.append(nn.LeakyReLU(0.1))
-        a.append(nn.Linear(hidden_dim, input_dim))
-        self.a = nn.Sequential(*a)
 
-    def forward(self, x):
-        z = x.view(x.shape[0], -1)
-        h1, h2 = z * self.mask, z * (1 - self.mask)
-        
-        m = self.a(h1) * (1 - self.mask)
+        layers = []
+        in_dim = input_dim + cond_dim
+        layers.append(nn.Linear(in_dim, hidden_dim))
+        layers.append(nn.LeakyReLU(0.1))
+
+        for _ in range(n_layers - 2):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.LeakyReLU(0.1))
+
+        layers.append(nn.Linear(hidden_dim, input_dim))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x, cond):
+        # x: [B, input_dim]
+        # cond: [B, cond_dim]
+        z = x.view(x.size(0), -1)
+        h1 = z * self.mask
+        h2 = z * (1 - self.mask)
+
+        inp = torch.cat([h1, cond], dim=1)
+        m = self.net(inp) * (1 - self.mask)
+
         h2 = h2 + m
-        
-        z = h1 + h2
-        
-        return z.view(x.shape)
+        out = h1 + h2
+        return out.view_as(x)
 
-    def inverse(self, z):
-        x = z.view(z.shape[0], -1)
-        h1, h2 = x * self.mask, x * (1 - self.mask)
-        
-        m = self.a(h1) * (1 - self.mask)
+    def inverse(self, z, cond):
+        x = z.view(z.size(0), -1)
+        h1 = x * self.mask
+        h2 = x * (1 - self.mask)
+
+        inp = torch.cat([h1, cond], dim=1)
+        m = self.net(inp) * (1 - self.mask)
+
         h2 = h2 - m
-        
-        x = h1 + h2 
-        
-        return x.view(z.shape)
+        out = h1 + h2
+        return out.view_as(z)
 
     def get_mask(self, input_dim, mask_type):
-        self.mask = torch.zeros(input_dim)
+        mask = torch.zeros(input_dim)
         if mask_type == 0:
-            self.mask[::2] = 1
-        
-        elif mask_type == 1:
-            self.mask[1::2] = 1
-        
-        return self.mask.view(1,-1).to(device).float()
-    
-    
-# Models
+            mask[::2] = 1
+        else:
+            mask[1::2] = 1
+        return mask.view(1, -1).to(device).float()
+
+
 @gin.configurable
 class FlowModel(nn.Module):
-    def __init__(self, input_dim, n_layers, n_couplings, hidden_dim):
-        super(FlowModel, self).__init__()
-        
+    def __init__(self, input_dim, cond_dim, n_layers, n_couplings, hidden_dim):
+        super().__init__()
         self.input_dim = input_dim
-        
-        self.coupling_layers = []
-        for i in range(n_couplings):
-            layer = Coupling_layer_NICE(input_dim, n_layers, i%2, hidden_dim).float().to(device)
-            self.coupling_layers.append(layer)
-        self.coupling_layers = nn.ModuleList(self.coupling_layers)
+        self.cond_dim = cond_dim
 
-    def forward(self, x):
-        return self.flow(x)
+        self.couplings = nn.ModuleList([
+            CouplingLayerNICE(
+                input_dim=input_dim,
+                cond_dim=cond_dim,
+                n_layers=n_layers,
+                mask_type=i % 2,
+                hidden_dim=hidden_dim
+            ).to(device).float()
+            for i in range(n_couplings)
+        ])
 
-    def flow(self, x):
+    def forward(self, x, cond):
+        return self.flow(x, cond)
+
+    def flow(self, x, cond):
         x = x.view(-1, self.input_dim).float()
-        
-        for layer in self.coupling_layers:
-            x = layer(x)
-            
+        cond = cond.view(-1, self.cond_dim).float()
+
+        for layer in self.couplings:
+            x = layer(x, cond)
         return x
 
-    def inv_flow(self, z):
+    def inv_flow(self, z, cond):
         z = z.view(-1, self.input_dim).float()
-        
-        for layer in self.coupling_layers[::-1]:
-            z = layer.inverse(z)
-            
+        cond = cond.view(-1, self.cond_dim).float()
+
+        for layer in reversed(self.couplings):
+            z = layer.inverse(z, cond)
         return z
-    
+
     def load_w(self, checkpoint_path):
-        self.load_state_dict(torch.load(checkpoint_path))
+        self.load_state_dict(torch.load(checkpoint_path, map_location=device))
