@@ -1,37 +1,31 @@
-# Data config
-train.task = 'regression'
-get_dataset.data_path = './data/sample.csv'
-train.num_features = 3
-get_dataset.features = ['logP', 'qed', 'SAS']
+# Data
+train.image_dir = "./output_images"
+train.num_features = 6
 
-# Train hps
-train.num_epochs = 50
-train.lr = 0.0001
-train.batch_size = 256
-train.alpha = 1.
-train.sigma = 1.
-train.sigma_decay_base = 0.9
+# DCGAN latent config
+train.nz = 100
+train.ngf = 64
+train.generator_checkpoint = "./saved_dcgan/netG.pt"
 
-# Model config
-train.encoder_fn = @EncoderRNN
-train.decoder_fn = @DecoderRNN
+# Flow config (PluGeN)
 train.flow_fn = @FlowModel
-
-EncoderRNN.hidden_size = 256
-EncoderRNN.output_size = 100
-EncoderRNN.n_layers = 3
-
-DecoderRNN.input_size = 100
-DecoderRNN.hidden_size = 256
-DecoderRNN.n_layers = 3
-
 FlowModel.input_dim = 100
+FlowModel.cond_dim = 6
 FlowModel.n_layers = 6
 FlowModel.n_couplings = 6
 FlowModel.hidden_dim = 256
 
-# Saved Smiles VAE model
-train.load_checkpoint = 'saved/smilesvae/final_model.pt'
+# Classifier training
+train.clf_epochs = 3
+train.clf_lr = 0.0002
 
-# Save path
-train.model_name = 'plugen'
+# Flow training
+train.flow_epochs = 10
+train.flow_lr = 0.0002
+train.lambda_z = 0.1
+
+# Loader + misc
+train.batch_size = 128
+train.num_workers = 2
+train.model_name = "plugen_dcgan"
+train.samples_per_epoch = 64
