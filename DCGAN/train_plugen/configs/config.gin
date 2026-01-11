@@ -29,3 +29,5 @@ train.batch_size = 128
 train.num_workers = 2
 train.model_name = "plugen_dcgan"
 train.samples_per_epoch = 64
+
+train.generator_checkpoint = "DCGAN/pretrained/netG.pt"
